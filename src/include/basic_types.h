@@ -16,9 +16,8 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-// enable grafana by
-// #define GRAFANA
+#include "config.h"
+#include "otlp.h"
 
 class Event {
   public:
@@ -172,31 +171,47 @@ class Request {
     Request() {
         id = this->request_id++;
 #ifdef GRAFANA
-        spans.push_back(get_tracer()->StartSpan("request"));
+    spans.push_back(get_tracer()->StartSpan("request"));
 #endif
     }
     virtual ~Request() {
 #ifdef GRAFANA
-        spans[0]->End();
+    while (spans.size() > 0)
+    {
+      spans.back()->End();
+      spans.pop_back();
+    }
+
 #endif
     }
     virtual void addEvent(std::unique_ptr<Event> event) {
 #ifdef GRAFANA
-        const char* event_type = kernel_hook_type_str[event->event_type];
-        if (event->trigger_type == ENTRY) {
-            opentelemetry::v1::trace::StartSpanOptions so;
-            so.parent = spans.back()->GetContext();
-            spans.push_back(get_tracer()->StartSpan(event_type, so));
-        } else if (event->trigger_type == EXIT) {
-            spans.back()->End();
-            spans.pop_back();
-        } else {
-            opentelemetry::v1::trace::StartSpanOptions so;
-            so.parent = spans.back()->GetContext();
-            auto scope = opentelemetry::trace::Scope(
-                    get_tracer()->StartSpan(event_type, so));
-            // ends immediately
+    if (spans.size() > 0)
+    {
+      const char *event_type = kernel_hook_type_str[event->event_type];
+      if (event->trigger_type == ENTRY)
+      {
+
+        {
+          opentelemetry::v1::trace::StartSpanOptions so;
+          so.parent = spans.back()->GetContext();
+          spans.push_back(get_tracer()->StartSpan(event_type, so));
         }
+      }
+      else if (event->trigger_type == EXIT)
+      {
+        if (spans.size() > 0)
+        {
+          spans.back()->End();
+          spans.pop_back();
+        }
+      }
+      else
+      {
+        // ends immediately
+        spans.back()->AddEvent(event_type);
+      }
+    }
 #endif
 
         events.push_back(std::move(event));
@@ -405,7 +420,6 @@ class Request {
     }
 
 #ifdef GRAFANA
-    std::vector<opentelemetry::nostd::shared_ptr<opentelemetry::trace::Span>>
-            spans;
+  std::vector<opentelemetry::nostd::shared_ptr<opentelemetry::trace::Span>> spans;
 #endif
 };
